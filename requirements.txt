@@ -1,0 +1,8 @@
+torch
+opacus
+flwr[simulation]>=1.5.0
+shap
+pandas
+scikit-learn
+matplotlib
+numpy
