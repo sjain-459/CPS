@@ -1,108 +1,111 @@
 # CTMAS: Proactive Threat Modeling for Intelligent Cyber-Physical Systems
 
-## Overview
-**CTMAS** is an advanced, distributed machine learning framework designed to protect critical Cyber-Physical Systems (CPS)—such as water treatment facilities—from real-time cyber-attacks. Operating in a decentralized environment using Federated Learning, the system ensures data privacy while proactively detecting anomalies. Once an anomaly is detected, the system utilizes Explainable AI (XAI) to map the mathematical deviations directly to actionable Cyber Threat Intelligence (STRIDE and MITRE ATT&CK frameworks).
+## 🛡️ Project Philosophy
+**CTMAS** (Cyber-Physical Threat Monitoring & Analysis System) is a production-grade framework designed to secure Industrial Control Systems (ICS)—specifically Water Treatment Plants—using a decentralized, privacy-preserving machine learning pipeline. 
 
-This project uses the real-world **SWaT** (Secure Water Treatment) dataset to simulate an end-to-end continuous threat monitoring pipeline.
-
----
-
-## 🏗️ System Architecture & Workflow
-
-The pipeline consists of four continuous phases:
-
-1. **Decentralized Data Preparation**: The central dataset is partitioned into isolated nodes representing distinct physical stages of a plant.
-2. **Privacy-Preserving Federated Training**: The nodes collaboratively train a global anomaly detection model without ever sharing their raw sensor data.
-3. **Proactive Anomaly Detection**: The trained system actively monitors incoming sensor data, computing an Early Warning Score to catch impending attacks before catastrophic failure.
-4. **Threat Intelligence Mapping**: When an anomaly is detected, XAI calculates exactly which sensors are under attack and maps them to standard ICS threat matrices.
+Unlike reactive systems that trigger alerts *after* a sensor breaches a static limit, CTMAS utilizes **Proactive Threat Modeling**. It learns the "normal" behavioral fingerprint of an entire plant and detects minute statistical deviations (anomalies) that precede actual failure.
 
 ---
 
----
+## 🏗️ Detailed Architecture & Workflow
 
-## 🖥️ Cybersecurity Command Center (Web Application)
+The system operates in four distinct phases, ensuring security at each layer of the stack:
 
-CTMAS now includes a full-stack, real-time simulation dashboard that provides a high-fidelity visual interface for monitoring the cybersecurity pipeline. Built with **React** and **FastAPI**, it allows users to witness the system's "conscious" thought process live.
-
-### Key Features:
-*   **Live Sensor Telemetry**: WebSocket-driven real-time charts showing reconstruction errors and EWMA early warning scores.
-*   **Dynamic Node Management**: Interactively add or remove federated clients to simulate swarm scaling.
-*   **XAI Diagnostic Interface**: Visual breakdown of SHAP features and direct mapping to MITRE/STRIDE intelligence when an anomaly is intercepted.
-*   **Privacy Observability**: Live tracking of the Privacy Budget ($\epsilon$) and Global Loss curves directly in the UI.
+1.  **Data Partitioning (Decentralized Preparation)**: Raw SWaT sensor data is mapped to its physical origin (Stages P1–P6). This reflects a real-world edge computing scenario where stage controllers don't share raw data.
+2.  **Federated Learning with Differential Privacy**: Nodes ship weight updates, not data. Every update is "privatized" by injecting noise, ensuring an attacker cannot reverse-engineer the plant's state from the model.
+3.  **Proactive Detection (EWMA)**: An Early Warning System monitors Error reconstruction trends. If the trend exceeds a dynamic threshold, an intercept is triggered.
+4.  **Intelligence Synthesis (XAI & Mapping)**: SHAP explains *which* sensor is failing, and the Threat Matrix translates that into **MITRE ATT&CK** techniques and **STRIDE** categories.
 
 ---
 
-## 🗂️ Module Descriptions
+## 📂 Module-by-Module Analysis
 
-### 1. `main.py` (CLI entry point)
-The core simulation logic. It orchestrates the synchronous federated learning environment and post-training anomaly detection on the test data.
+### 1. `models.py`: The Neural Architect
+*   **Technology**: PyTorch 1D-CNN Autoencoder.
+*   **Mechanism**: A symmetric encoder-decoder that compresses time-series windows into a latent space and attempts to reconstruct them.
+*   **The "Why" (CNN vs RNN)**: Standard Recurrent Neural Networks (LSTMs) are notoriously difficult to use with **Differential Privacy (DP)** because they maintain hidden states across time, making per-sample gradient computation (a requirement for Opacus) mathematically complex. We use **1D-CNNs** because they capture temporal trends via convolutional filters while remaining perfectly compatible with DP engines.
 
-### 2. `api.py` (FastAPI WebSocket Backend)
-A production-ready wrapper that exposes the simulation logic via WebSockets. It streams training telemetry, sensor streams, and XAI results to the frontend dashboard in real-time.
+### 2. `data_pipeline.py`: Time-Series Engineering
+*   **Technology**: Pandas, NumPy, Scikit-Learn.
+*   **Mechanism**: Implements **Sliding Window Tokenization**. It takes raw sensor logs and creates 3D tensors `(Batch, Sequence_Length, Features)`. 
+*   **Key Detail**: Features are zero-padded to `Config.NUM_FEATURES`. This ensures that even if Stage P1 has fewer sensors than P6, the neural architecture remains globally symmetric across the federated network.
 
-### 3. `frontend/` (React Dashboard)
-A modern "Cybersecurity Command Center" built with Vite, TailwindCSS, and Lucide Icons. It manages the state of the simulation and renders complex analytics into human-readable dashboards.
+### 3. `local_training.py`: The Privacy Engine
+*   **Technology**: **Opacus** (by Meta).
+*   **Mechanism**: Before gradients are sent to the server, this module:
+    1.  Computes per-sample gradients.
+    2.  Clips the gradients to a rigid norm (`MAX_GRAD_NORM`).
+    3.  Adds Gaussian noise.
+*   **The "Why"**: This provides a mathematical guarantee of **Differential Privacy**. It ensures that no single data pulse at the edge can be uniquely identified in the global global model.
 
-### 4. `data_pipeline.py` (Data & Feature Engineering)
-Responsible for ingesting the SWaT dataset. Compresses tabular data into **3D Time-Series Sliding Windows** for 1D-CNN ingestion.
+### 4. `server.py`: Trust-Aware Aggregation
+*   **Technology**: Flower (`flwr`).
+*   **Mechanism**: Extends the standard `FedAvg` (Federated Averaging) strategy. It calculates the similarity of local updates.
+*   **Poisoning Defense**: If a node is compromised and starts sending "junk" updates to poison the global model, the `TrustAware` logic detects the anomaly and **excludes that node** from the round aggregation.
 
-*(... modules 5–8 remain the same: models, local_training, server, threat_intelligence, xai_explainer, visualization ...)*
+### 5. `threat_intelligence.py`: Early Warning & Intelligence
+*   **Mechanism**: 
+    - **EWMA (Exponential Weighted Moving Average)**: Tracks the *trend* of reconstruction errors. This is crucial for detecting "Low-and-Slow" attacks that stay just below static thresholds for days.
+    - **Intelligence Mapping**: A static knowledge base that maps sensor prefixes (e.g., `LIT`, `FIT`) to **STRIDE** and **MITRE ATT&CK for ICS** T-codes.
+*   **Benefit**: Converts raw math into actionable "Combat Reports" for security operators.
+
+### 6. `xai_explainer.py`: The Black-Box Unpacker
+*   **Technology**: **SHAP** (SHapley Additive exPlanations).
+*   **Mechanism**: Uses `GradientExplainer` to attribute the model's reconstruction error to specific input sensors.
+*   **Outcome**: When an alert fires, SHAP tells you precisely which sensor (e.g., `AIT201`) is being spoofed.
 
 ---
 
-## 🚀 Running the Project
+## 📡 Full-Stack Visualization Layer
 
-### 1. Prerequisites
-Ensure you have the SWaT CSV datasets inside the `dataset/` directory (`normal.csv` and `attack.csv`).
+### `api.py`: WebSocket Backend
+*   **Technology**: FastAPI + WebSockets.
+*   **The "Why"**: Standard REST APIs are insufficient for live simulations. We use WebSockets to "push" events (training rounds, sensor blips, XAI results) to the frontend with zero latency.
 
-### 2. Backend Setup
+### `frontend/`: The Command Center
+*   **Technology**: React, TailwindCSS, Recharts, Lucide Icons.
+*   **Dashboard Components**:
+    - **Swarm View**: Shows the status of all 6 plant nodes in the federated network.
+    - **Telemetry Panel**: Live graph of reconstruction error vs early warning score.
+    - **Intelligence Summary**: Displays the MITRE/STRIDE mapping once an anomaly is intercepted.
+    - **Neural analytics**: Renders a dynamic image of the Federated Learning loss/epsilon curve (`federated_metrics.png`).
+
+---
+
+## 🚀 Getting Started
+
+### 📦 Prerequisites
+- Python 3.9+
+- Node.js & npm (for Web Dashboard)
+- SWaT Dataset (`normal.csv` and `attack.csv` in `dataset/`)
+
+### 🛠️ Installation
 ```bash
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
+# Backend
 pip install -r requirements.txt
+
+# Frontend
+cd frontend
+npm install
 ```
 
-### 3. Choose your mode:
-
-#### **Mode A: CLI Simulation** (Terminal only)
-```bash
-python main.py
-```
-
-#### **Mode B: Interactive Web Dashboard** (Recommended)
-1. **Start the Backend API:**
-   ```bash
-   python api.py # Runs on port 8001
-   ```
-2. **Setup and Start the Frontend:**  
-   (In a separate terminal)
-   ```bash
-   cd frontend
-   npm install
-   npm run dev  # Dashboard will be live at http://localhost:5173
-   ```
+### 🏃 Running
+- **Mode 1 (CLI)**: `python main.py`
+- **Mode 2 (Pro Web Dashboard)**:
+  1. Start backend: `python api.py`
+  2. Start frontend: `cd frontend && npm run dev`
+  3. Navigate to `http://localhost:5173`
 
 ---
 
-## 📈 Simulation Results & Output
+## 🛠️ Technology Stack Summary
 
-### 1. Web Dashboard Analytics
-*   **Swarm Monitoring**: Watch nodes pulse green during training and gray out when untrusted nodes are dropped by the strategy.
-*   **Active Threat Mapping**: When the alert triggers, the UI instantly populates a red diagnostic panel showing the compromised sensor ID and the specific MITRE technique (e.g., T0831).
-*   **Neural Analytics**: Automatic rendering of the `federated_metrics.png` plot in the dashboard upon session completion.
-
-### 2. Physical Plots (Saved in `results/`)
-1. **`stage_1_anomaly_plot.png`**: Visualizes reconstruction error crossing the EWMA thresholds.
-2. **`federated_metrics.png`**: Tracks Global Loss vs. Differential Privacy Epsilon.
-
----
-
-## 🛡️ Security Framework Mappings
-*   **Data Integrity**: Differential Privacy (Opacus).
-*   **Poisoning Defense**: Custom Trust-Aware FedAvg Strategy.
-*   **Tactical Mapping**: MITRE ATT&CK for Industrial Control Systems (ICS).
-*   **Threat Categorization**: STRIDE (Spoofing, Tampering, Repudiation, ID, Denial of Service, Elevation of Privilege).
-
+| Layer | Technology |
+| :--- | :--- |
+| **Computational Framework** | PyTorch / Python |
+| **Distributed Training** | Flower (flwr) |
+| **Privacy / Encryption** | Opacus (Differential Privacy) |
+| **Explainable AI** | SHAP (Gradient Explainer) |
+| **Web Service** | FastAPI / Uvicorn |
+| **Web UI** | React / TailwindCSS / Recharts |
+| **Threat Intelligence** | MITRE ATT&CK / STRIDE |
