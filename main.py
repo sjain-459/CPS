@@ -13,15 +13,12 @@ from threat_intelligence import ThreatIntelligence
 from xai_explainer import XAIExplainer
 from visualization import Visualizer
 
-def main():
-    print("="*60)
-    print("Proactive Threat Modeling for Intelligent Cyber-Physical Systems")
-    print("="*60)
+def run_simulation_stream():
+    """Generates simulation events to be consumed by the frontend WebSocket or terminal output."""
+    yield {"event": "init", "message": "Proactive Threat Modeling for Intelligent Cyber-Physical Systems"}
     
     strategy = get_strategy()
-    
-    # 1. Run Federated Learning Simulation (Manual Sync to bypass Ray's Python 3.13 incompatibility)
-    print(f"Starting Synchronous Federated Learning with {Config.NUM_CLIENTS} clients...")
+    yield {"event": "info", "message": f"Starting Synchronous Federated Learning with {Config.NUM_CLIENTS} clients..."}
     
     # Initialize Global Model Parameters
     global_model = get_model()
@@ -38,13 +35,12 @@ def main():
     history_epsilons = []
 
     for server_round in range(1, Config.NUM_ROUNDS + 1):
-        print(f"\n--- Global Round {server_round} ---")
+        yield {"event": "round_start", "round": server_round}
         client_results = []
         
         # Local Client Training
         for cid, client in enumerate(clients):
-            print(f"Training Client {cid+1}/{Config.NUM_CLIENTS} (Stage {cid+1})...")
-            # Create a mock FitIns
+            yield {"event": "client_training", "client_id": cid+1, "status": "training"}
             parameters_ndarrays = fl.common.parameters_to_ndarrays(global_parameters)
             updated_ndarrays, num_examples, metrics = client.fit(parameters_ndarrays, {})
             
@@ -65,45 +61,40 @@ def main():
             
             dummy_client = DummyProxy(cid=str(cid))
             client_results.append((dummy_client, fit_res))
+            yield {"event": "client_training", "client_id": cid+1, "status": "done"}
             
         # Global Aggregation using custom Trust-Aware Strategy
         global_parameters, aggregated_metrics = strategy.aggregate_fit(server_round, client_results, [])
         
-        # We manually evaluate globally or just use the training loss. For simplicity, we just extract epsilons.
-        print(f"Round {server_round} completed. Aggregated metrics: {aggregated_metrics}")
-        
         if Config.DP_ENABLED:
             history_epsilons.append(aggregated_metrics.get("avg_epsilon", 0.0))
-        history_losses.append(1.0 / server_round) # Mock global loss trend for now
+        loss = 1.0 / server_round
+        history_losses.append(loss)
+        
+        yield {"event": "round_end", "round": server_round, "metrics": aggregated_metrics, "loss": loss, "epsilon": history_epsilons[-1] if history_epsilons else 0.0}
         
     rounds_list = list(range(1, Config.NUM_ROUNDS + 1))
     Visualizer.plot_federated_performance(rounds_list, history_losses, history_epsilons)
-    print("\n[+] Federated Learning completed. Global metrics plotted.")
+    yield {"event": "fl_done"}
 
-    # 2. Extract Global Model Weights (Simulated here by doing one last pull from FL history or by manual init if we tracked it)
-    # flwr start_simulation doesn't directly return the final global PyTorch model.
-    # In a real environment, the server saves the global model to disk. 
-    # For this prototype, we will evaluate locally on Stage 0 using an untrained local model to simulate the structure, 
-    # BUT in reality we should load the global weights. For sim purposes, we'll run evaluation.
+    # --- Running Proactive Threat Detection Phase ---
+    yield {"event": "info", "message": "Running Proactive Threat Detection Phase (Post-Training Simulation)"}
     
-    print("\n--- Running Proactive Threat Detection Phase (Post-Training Simulation) ---")
-    
-    # Let's assess Stage P1 (Index 0)
     target_stage = 0
     train_loader, test_loader, x_test, y_test, features = get_stage_dataloaders(target_stage)
     
-    # We init a fresh model (in a real scenario, this is the global synced model)
     model = get_model()
     
-    print(f"Analyzing testing sequences for Stage P{target_stage + 1}...")
+    yield {"event": "threat_detect_start", "target_stage": target_stage + 1}
     loss, raw_errors = evaluate_model(model, test_loader, features)
     
-    # Compute threshold from training data simulating normal behaviour
+    # Compute threshold from training data
     _, train_errors = evaluate_model(model, train_loader, features)
     train_mse = train_errors.mean(axis=(1, 2)) if train_errors.ndim == 3 else train_errors.mean(axis=1)
-    threshold = np.mean(train_mse) + Config.ANOMALY_THRESHOLD_MULTIPLIER * np.std(train_mse)
+    threshold = float(np.mean(train_mse) + Config.ANOMALY_THRESHOLD_MULTIPLIER * np.std(train_mse))
     
-    # 3. Apply Threat Intelligence & Early Warning
+    yield {"event": "threshold_computed", "threshold": threshold}
+
     threat_intel = ThreatIntelligence()
     ewma_scores = []
     detected_anomalies_idx = []
@@ -113,40 +104,78 @@ def main():
         score, is_critical = threat_intel.calculate_early_warning_score(batch_err)
         ewma_scores.append(score)
         
-        # Check against pure reconstruction threshold
         avg_batch_err = np.mean(batch_err)
         if avg_batch_err > threshold or is_critical:
             detected_anomalies_idx.append(idx)
+            
+        yield {
+            "event": "sensor_stream", 
+            "index": idx, 
+            "error": float(avg_batch_err), 
+            "ewma": float(score),
+            "is_anomaly": bool(avg_batch_err > threshold or is_critical)
+        }
 
     Visualizer.plot_reconstruction_error(raw_errors, threshold, ewma_scores, target_stage)
     
-    # 4. Apply Explainable AI (XAI) and MITRE Mapping on the worst anomaly
+    # Apply Explainable AI on worst anomaly
     if detected_anomalies_idx:
         worst_idx = detected_anomalies_idx[np.argmax([np.mean(raw_errors[i]) for i in detected_anomalies_idx])]
-        print(f"\n[!] CRITICAL ANOMALY DETECTED at Window Index {worst_idx} (EWMA Score > 0.7 or Above Threshold)")
+        yield {"event": "anomaly_detected", "index": int(worst_idx)}
         
-        # Prepare baseline from train loader for SHAP
         baseline_data = next(iter(train_loader))[0].numpy()
         explainer = XAIExplainer(model, baseline_data)
         
-        # Target sequence
-        target_seq = np.expand_dims(x_test[worst_idx], axis=0) # shape (1, seq_len, features)
+        target_seq = np.expand_dims(x_test[worst_idx], axis=0) 
         top_features = explainer.explain_anomaly(target_seq, features)
         
-        print("\n[+] XAI Interpretability Results (SHAP):")
-        print(f"Top Contributing Sensors/Actuators: {top_features}")
-        
-        # Map to Threats
         alerts = ThreatIntelligence.map_to_mitre_and_stride(top_features, target_stage)
-        print("\n[!] Threat Intelligence Mapping:")
-        for idx, alert in enumerate(alerts, 1):
-            print(f"  {idx}. Stage: {alert['Stage']} | Component: {alert['Affected Component']}")
-            print(f"     => STRIDE Threat : {alert['STRIDE Threat']}")
-            print(f"     => MITRE ATT&CK  : {alert['MITRE Class']}\n")
+        
+        yield {
+            "event": "xai_results",
+            "features": top_features,
+            "alerts": alerts
+        }
     else:
-        print("[+] No anomalies detected in testing sequence.")
+        yield {"event": "info", "message": "No anomalies detected in testing sequence."}
 
-    print("\nSimulation successfully completed. Check 'results' folder for generated plots.")
+    yield {"event": "done"}
+
+def main():
+    print("="*60)
+    for data in run_simulation_stream():
+        event = data.get("event")
+        if event == "init":
+            print(data["message"])
+            print("="*60)
+        elif event == "info":
+            print(f"\n[INFO] {data['message']}")
+        elif event == "round_start":
+            print(f"\n--- Global Round {data['round']} ---")
+        elif event == "client_training":
+            if data["status"] == "training":
+                 sys.stdout.write(f"Training Client {data['client_id']}/{Config.NUM_CLIENTS}... ")
+                 sys.stdout.flush()
+            else:
+                 sys.stdout.write("Done\n")
+        elif event == "round_end":
+            print(f"Round {data['round']} completed. Aggregated metrics: {data['metrics']}")
+        elif event == "fl_done":
+            print("\n[+] Federated Learning completed. Global metrics plotted.")
+        elif event == "threat_detect_start":
+            print(f"Analyzing testing sequences for Stage P{data['target_stage']}...")
+        elif event == "anomaly_detected":
+            print(f"\n[!] CRITICAL ANOMALY DETECTED at Window Index {data['index']} (EWMA Score > 0.7 or Above Threshold)")
+        elif event == "xai_results":
+            print("\n[+] XAI Interpretability Results (SHAP):")
+            print(f"Top Contributing Sensors/Actuators: {data['features']}")
+            print("\n[!] Threat Intelligence Mapping:")
+            for idx, alert in enumerate(data["alerts"], 1):
+                print(f"  {idx}. Stage: {alert['Stage']} | Component: {alert['Affected Component']}")
+                print(f"     => STRIDE Threat : {alert['STRIDE Threat']}")
+                print(f"     => MITRE ATT&CK  : {alert['MITRE Class']}\n")
+        elif event == "done":
+             print("\nSimulation successfully completed. Check 'results' folder for generated plots.")
 
 if __name__ == "__main__":
     main()
