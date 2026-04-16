@@ -7,6 +7,68 @@ Unlike reactive systems that trigger alerts *after* a sensor breaches a static l
 
 ---
 
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    %% Node Definitions
+    subgraph DATA ["📁 Data Layer (SWaT Distributed Stages)"]
+        D1[(Stage P1: Intake)]
+        D2[(Stage P2: Pre-treatment)]
+        D6[(Stage P6: Treatment)]
+    end
+
+    subgraph EDGE ["🛡️ Edge Infrastructure (Isolated Clients)"]
+        direction TB
+        DP["Data Pipeline (Sliding Windows)"]
+        CNN["1D-CNN Autoencoder (Feature Learning)"]
+        OP["Opacus DP Engine (Gradient Clipping/Noise)"]
+        
+        DP --> CNN --> OP
+    end
+
+    subgraph SERVER ["🛰️ Federated Server (Flower Framework)"]
+        direction TB
+        STR["Trust-Aware Strategy (Anomaly Filtering)"]
+        AGG["Global Model Aggregator"]
+        BUD["Privacy Budget Monitor (ε, δ)"]
+        
+        STR --> AGG --> BUD
+    end
+
+    subgraph INTEL ["🧠 Intelligence & XAI Layer"]
+        EWMA["EWMA Score (Proactive Detection)"]
+        SHAP["SHAP Explainer (Feature Attribution)"]
+        MITRE["Threat Matrix (MITRE ATT&CK & STRIDE)"]
+        
+        EWMA --> SHAP --> MITRE
+    end
+
+    subgraph UI ["🖥️ Command Center (Full-Stack UI)"]
+        API["FastAPI WebSocket Backend"]
+        Dashboard["React Dashboard (Live Recharts)"]
+        
+        API --> Dashboard
+    end
+
+    %% Flow Connections
+    D1 & D2 & D6 -.-> DP
+    OP -- "🔒 Privatized Updates" --> STR
+    AGG -- "🔄 Synchronized Model" --> CNN
+    AGG ==> EWMA
+    MITRE & EWMA & BUD ==> API
+
+    %% Styling
+    style Dashboard fill:#003366,stroke:#00ccff,color:#fff
+    style DATA fill:#1a1a1a,stroke:#333,color:#fff
+    style INTEL fill:#2d0a0a,stroke:#ff4444,color:#fff
+    style SERVER fill:#0a2d0a,stroke:#44ff44,color:#fff
+```
+
+---
+
+---
+
 ## 🏗️ Detailed Architecture & Workflow
 
 The system operates in four distinct phases, ensuring security at each layer of the stack:
